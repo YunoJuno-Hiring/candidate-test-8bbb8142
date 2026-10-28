@@ -15,6 +15,8 @@ import uuid
 
 from django.utils import timezone
 
+from accounts.models import Company
+
 from .models import EVENT_WEBHOOK_TEST, WebhookDelivery, WebhookEndpoint
 from .payloads import build_event_body
 from .signing import build_signed_headers
@@ -97,6 +99,23 @@ def deliver(
     else:
         logger.warning('webhook_delivery_failed', extra={**log_context, 'reason': reason})
     return delivery
+
+
+def publish_event(company: Company, event_type: str, data: dict) -> list[WebhookDelivery]:
+    """Serialize an event once and deliver it to every subscribed endpoint.
+
+    The body bytes and publish timestamp are fixed here, then each endpoint
+    signs with its own secret. First attempt only: retries are left for a
+    later queue. Delivery failures are recorded; they do not raise.
+    """
+    created_at = timezone.now()
+    event_id = uuid.uuid4()
+    body = build_event_body(event_id, event_type, created_at, data)
+    timestamp = int(created_at.timestamp())
+    endpoints = WebhookEndpoint.objects.filter(company=company).subscribed_to(event_type)
+    return [
+        deliver(endpoint, event_id, event_type, body, timestamp, attempt=1) for endpoint in endpoints
+    ]
 
 
 def send_test_event(endpoint: WebhookEndpoint) -> WebhookDelivery:

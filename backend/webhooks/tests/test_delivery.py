@@ -3,10 +3,18 @@ import socket
 import uuid
 
 import pytest
+from django.contrib.auth.models import User
 
+from accounts.models import Freelancer
 from webhooks import delivery
-from webhooks.delivery import TEST_EVENT_MESSAGE, deliver, send_test_event
+from webhooks.delivery import (
+    TEST_EVENT_MESSAGE,
+    deliver,
+    publish_event,
+    send_test_event,
+)
 from webhooks.models import (
+    EVENT_CONTRACT_CREATED,
     EVENT_TIMESHEET_APPROVED,
     EVENT_WEBHOOK_TEST,
     WebhookDelivery,
@@ -110,6 +118,116 @@ def test_deliver_records_connection_failure(northstar, url):
 
     assert result.successful is False
     assert result.reason == 'connection failed'
+
+
+# --- publish_event ---
+
+@pytest.mark.django_db
+def test_publish_event_sends_signed_payload_to_subscribed_endpoints(northstar, fake_receiver):
+    subscribed = WebhookEndpoint.objects.create(
+        url=fake_receiver.url, company=northstar, event_types=[EVENT_TIMESHEET_APPROVED]
+    )
+    WebhookEndpoint.objects.create(
+        url='http://127.0.0.1:9/other', company=northstar, event_types=[EVENT_CONTRACT_CREATED]
+    )
+
+    deliveries = publish_event(northstar, EVENT_TIMESHEET_APPROVED, {'timesheet_id': 7})
+
+    assert len(deliveries) == 1
+    assert deliveries[0].destination == subscribed
+    assert deliveries[0].event_type == EVENT_TIMESHEET_APPROVED
+    assert deliveries[0].successful is True
+    [received] = fake_receiver.requests
+    payload = json.loads(received.body)
+    assert payload['type'] == EVENT_TIMESHEET_APPROVED
+    assert payload['version'] == PAYLOAD_VERSION
+    assert payload['data'] == {'timesheet_id': 7}
+    assert received.headers[ID_HEADER] == str(deliveries[0].event_id)
+    assert verify_signature(
+        subscribed.secret,
+        int(received.headers[TIMESTAMP_HEADER]),
+        received.body,
+        received.headers[SIGNATURE_HEADER],
+    )
+
+
+@pytest.mark.django_db
+def test_publish_event_skips_inactive_endpoints(northstar, fake_receiver):
+    WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar, active=False)
+
+    deliveries = publish_event(northstar, EVENT_TIMESHEET_APPROVED, {'timesheet_id': 1})
+
+    assert deliveries == []
+    assert fake_receiver.requests == []
+
+
+@pytest.mark.django_db
+def test_publish_event_reuses_same_body_and_event_id_for_all_endpoints(northstar, fake_receiver):
+    base = fake_receiver.url.rsplit('/', 1)[0]
+    endpoints = {
+        '/hook-a': WebhookEndpoint.objects.create(url=f'{base}/hook-a', company=northstar),
+        '/hook-b': WebhookEndpoint.objects.create(url=f'{base}/hook-b', company=northstar),
+    }
+
+    deliveries = publish_event(northstar, EVENT_TIMESHEET_APPROVED, {'timesheet_id': 7})
+
+    assert {d.destination_id for d in deliveries} == {ep.id for ep in endpoints.values()}
+    assert deliveries[0].event_id == deliveries[1].event_id
+    assert len(fake_receiver.requests) == 2
+    assert fake_receiver.requests[0].body == fake_receiver.requests[1].body
+    for received in fake_receiver.requests:
+        endpoint = endpoints[received.path]
+        assert verify_signature(
+            endpoint.secret,
+            int(received.headers[TIMESTAMP_HEADER]),
+            received.body,
+            received.headers[SIGNATURE_HEADER],
+        )
+
+
+@pytest.mark.django_db
+def test_creating_contract_publishes_signed_webhook(admin_client, northstar, fake_receiver):
+    endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar)
+    freelancer_user = User.objects.create_user(
+        username='hooked@test.test', email='hooked@test.test', password='x'
+    )
+    freelancer = Freelancer.objects.create(user=freelancer_user, name='Hooked Freelancer')
+
+    resp = admin_client.post(
+        '/api/contracts/',
+        {
+            'freelancer': freelancer.id,
+            'daily_rate': '550.00',
+            'start_date': '2026-02-01',
+            'end_date': '2026-08-31',
+            'status': 'active',
+        },
+        format='json',
+    )
+
+    assert resp.status_code == 201
+    delivery = WebhookDelivery.objects.get()
+    assert delivery.event_type == EVENT_CONTRACT_CREATED
+    assert delivery.destination == endpoint
+    assert delivery.successful is True
+    [received] = fake_receiver.requests
+    payload = json.loads(received.body)
+    assert payload['type'] == EVENT_CONTRACT_CREATED
+    assert payload['data'] == {
+        'contract_id': resp.data['id'],
+        'freelancer_id': freelancer.id,
+        'daily_rate': '550.00',
+        'start_date': '2026-02-01',
+        'end_date': '2026-08-31',
+        'status': 'active',
+    }
+    assert received.headers[ID_HEADER] == str(delivery.event_id)
+    assert verify_signature(
+        endpoint.secret,
+        int(received.headers[TIMESTAMP_HEADER]),
+        received.body,
+        received.headers[SIGNATURE_HEADER],
+    )
 
 
 # --- send_test_event ---

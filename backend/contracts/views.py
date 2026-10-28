@@ -3,6 +3,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from webhooks.delivery import publish_event
+from webhooks.models import EVENT_CONTRACT_CREATED
+
 from .models import Contract, TimesheetEntry
 from .serializers import (
     ContractCreateSerializer,
@@ -31,6 +34,18 @@ class ContractListView(APIView):
         serializer = ContractCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         contract = serializer.save(company=request.user.company_admin.company)
+        publish_event(
+            contract.company,
+            EVENT_CONTRACT_CREATED,
+            {
+                'contract_id': contract.id,
+                'freelancer_id': contract.freelancer_id,
+                'daily_rate': contract.daily_rate,
+                'start_date': contract.start_date,
+                'end_date': contract.end_date,
+                'status': contract.status,
+            },
+        )
         return Response(ContractSerializer(contract).data, status=status.HTTP_201_CREATED)
 
     def _get_queryset(self, user):
