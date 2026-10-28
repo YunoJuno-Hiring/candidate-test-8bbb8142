@@ -1,9 +1,17 @@
 import uuid
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
-from webhooks.models import WebhookDelivery, WebhookEndpoint
+from webhooks.models import (
+    EVENT_CONTRACT_CREATED,
+    EVENT_TIMESHEET_APPROVED,
+    EVENT_TIMESHEET_SUBMITTED,
+    EVENT_WEBHOOK_TEST,
+    WebhookDelivery,
+    WebhookEndpoint,
+)
 
 
 @pytest.fixture
@@ -55,9 +63,9 @@ def test_duplicate_url_for_same_company_rejected(endpoint, northstar):
 
 
 @pytest.mark.django_db
-def test_duplicate_url_for_different_company_rejected(endpoint, meridian):
-    with pytest.raises(IntegrityError):
-        WebhookEndpoint.objects.create(url=endpoint.url, company=meridian)
+def test_same_url_allowed_for_different_company(endpoint, meridian):
+    other = WebhookEndpoint.objects.create(url=endpoint.url, company=meridian)
+    assert other.secret != endpoint.secret
 
 
 @pytest.mark.django_db
@@ -137,3 +145,69 @@ def test_successful_must_be_set(endpoint):
 def test_deliveries_are_deleted_with_their_endpoint(delivery, endpoint):
     endpoint.delete()
     assert not WebhookDelivery.objects.filter(pk=delivery.pk).exists()
+
+
+@pytest.mark.django_db
+def test_endpoint_defaults_to_all_event_types(endpoint):
+    assert endpoint.event_types == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ('event_types', 'is_subscribed'),
+    [
+        ([], True),
+        ([EVENT_TIMESHEET_APPROVED], True),
+        ([EVENT_TIMESHEET_SUBMITTED, EVENT_TIMESHEET_APPROVED], True),
+        ([EVENT_CONTRACT_CREATED], False),
+    ],
+)
+def test_subscribed_to_matches_event_types(endpoint, event_types, is_subscribed):
+    endpoint.event_types = event_types
+    endpoint.save()
+
+    subscribed = WebhookEndpoint.objects.subscribed_to(EVENT_TIMESHEET_APPROVED)
+    assert subscribed.filter(pk=endpoint.pk).exists() is is_subscribed
+
+
+@pytest.mark.django_db
+def test_subscribed_to_excludes_inactive_endpoints(endpoint):
+    endpoint.active = False
+    endpoint.save()
+
+    assert not WebhookEndpoint.objects.subscribed_to(EVENT_TIMESHEET_APPROVED).exists()
+
+
+@pytest.mark.django_db
+def test_company_urls_receive_different_event_types(northstar):
+    timesheets = WebhookEndpoint.objects.create(
+        url='https://ops.test/hooks', company=northstar, event_types=[EVENT_TIMESHEET_APPROVED]
+    )
+    contracts = WebhookEndpoint.objects.create(
+        url='https://legal.test/hooks', company=northstar, event_types=[EVENT_CONTRACT_CREATED]
+    )
+    everything = WebhookEndpoint.objects.create(url='https://audit.test/hooks', company=northstar)
+
+    approved = set(WebhookEndpoint.objects.filter(company=northstar).subscribed_to(EVENT_TIMESHEET_APPROVED))
+    created = set(WebhookEndpoint.objects.filter(company=northstar).subscribed_to(EVENT_CONTRACT_CREATED))
+
+    assert approved == {timesheets, everything}
+    assert created == {contracts, everything}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('event_type', [EVENT_TIMESHEET_APPROVED, EVENT_WEBHOOK_TEST])
+def test_delivery_accepts_known_event_types(endpoint, event_type):
+    delivery = WebhookDelivery(
+        event_id=uuid.uuid4(), event_type=event_type, destination=endpoint, attempt=1, successful=True
+    )
+    delivery.full_clean()
+
+
+@pytest.mark.django_db
+def test_delivery_rejects_unknown_event_type(endpoint):
+    delivery = WebhookDelivery(
+        event_id=uuid.uuid4(), event_type='invoice.paid', destination=endpoint, attempt=1, successful=True
+    )
+    with pytest.raises(ValidationError):
+        delivery.full_clean()
