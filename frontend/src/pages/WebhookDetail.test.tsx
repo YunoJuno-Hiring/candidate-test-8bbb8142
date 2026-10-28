@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import WebhookDetail from './WebhookDetail'
 import { ApiError, WebhookDelivery, WebhookEndpointDetail } from '../api/client'
-import { fetchWebhookEndpoint, sendTestWebhookEvent } from '../api/webhooks'
+import { fetchWebhookEndpoint, sendTestWebhookEvent, updateWebhookEndpoint } from '../api/webhooks'
 import { renderRoute } from '../test/render'
 
 vi.mock('../api/webhooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/webhooks')>()),
   fetchWebhookEndpoint: vi.fn(),
   sendTestWebhookEvent: vi.fn(),
+  updateWebhookEndpoint: vi.fn(),
 }))
 
 function makeTestDelivery(overrides: Partial<WebhookDelivery> = {}): WebhookDelivery {
@@ -150,6 +151,50 @@ describe('WebhookDetail', () => {
     await user.click(await screen.findByRole('button', { name: 'Send test event' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent('Test event failed: connection failed.')
+  })
+
+  it('deactivates the webhook and keeps its delivery log', async () => {
+    const user = userEvent.setup()
+    const { deliveries, ...endpoint } = makeDetail({ deliveries: [makeTestDelivery()] })
+    vi.mocked(fetchWebhookEndpoint).mockResolvedValue({ ...endpoint, deliveries })
+    vi.mocked(updateWebhookEndpoint).mockResolvedValue({ ...endpoint, active: false })
+    renderPage('3')
+
+    const toggle = await screen.findByRole('switch', { name: 'Active' })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+
+    expect(updateWebhookEndpoint).toHaveBeenCalledWith(3, { active: false })
+    expect(await screen.findByText('Disabled')).toBeInTheDocument()
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByText('Receives no events. Test events can still be sent.')).toBeInTheDocument()
+    expect(screen.getAllByRole('row')).toHaveLength(2)
+  })
+
+  it('activates a disabled webhook', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetchWebhookEndpoint).mockResolvedValue(makeDetail({ active: false }))
+    vi.mocked(updateWebhookEndpoint).mockResolvedValue({ ...makeDetail(), active: true })
+    renderPage('3')
+
+    await user.click(await screen.findByRole('switch', { name: 'Active' }))
+
+    expect(updateWebhookEndpoint).toHaveBeenCalledWith(3, { active: true })
+    expect(await screen.findByText('Active')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Active' })).toBeChecked()
+  })
+
+  it('keeps the current state and shows an error when the update fails', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetchWebhookEndpoint).mockResolvedValue(makeDetail())
+    vi.mocked(updateWebhookEndpoint).mockRejectedValue(new ApiError(500, {}))
+    renderPage('3')
+
+    await user.click(await screen.findByRole('switch', { name: 'Active' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to update the webhook.')
+    expect(screen.getByRole('switch', { name: 'Active' })).toBeChecked()
+    expect(screen.getByText('Active')).toBeInTheDocument()
   })
 
   it('shows an error when the test event request fails', async () => {

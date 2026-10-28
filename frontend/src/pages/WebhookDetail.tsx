@@ -1,8 +1,8 @@
 import { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { fetchWebhookEndpoint, sendTestWebhookEvent } from '../api/webhooks'
-import { ApiError, WebhookDelivery } from '../api/client'
+import { fetchWebhookEndpoint, sendTestWebhookEvent, updateWebhookEndpoint } from '../api/webhooks'
+import { ApiError, WebhookDelivery, WebhookEndpointDetail } from '../api/client'
 import { EndpointStatusBadge, EventTypeTag, EventTypeTags } from '../components/WebhookBadges'
 
 function formatDateTime(value: string): string {
@@ -22,6 +22,53 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
     <div className="flex gap-4 py-2">
       <dt className="w-32 shrink-0 text-slate-500">{label}</dt>
       <dd className="text-slate-800">{children}</dd>
+    </div>
+  )
+}
+
+function ActiveToggle({ endpoint }: { endpoint: WebhookEndpointDetail }) {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: (isActive: boolean) => updateWebhookEndpoint(endpoint.id, { active: isActive }),
+    onSuccess: (updated) => {
+      // The PATCH response has no deliveries, so keep the ones already loaded.
+      queryClient.setQueryData<WebhookEndpointDetail>(['webhook-endpoint', endpoint.id], (current) =>
+        current ? { ...current, ...updated } : current,
+      )
+      queryClient.invalidateQueries({ queryKey: ['webhook-endpoints'] })
+    },
+  })
+
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={endpoint.active}
+          aria-label="Active"
+          onClick={() => mutation.mutate(!endpoint.active)}
+          disabled={mutation.isPending}
+          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${endpoint.active ? 'bg-indigo-600' : 'bg-slate-300'}`}
+        >
+          <span
+            aria-hidden="true"
+            className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${endpoint.active ? 'translate-x-4' : 'translate-x-0.5'}`}
+          />
+        </button>
+        <span className="text-slate-500 text-xs">
+          {mutation.isPending
+            ? 'Saving…'
+            : endpoint.active
+              ? 'Receives events it is subscribed to.'
+              : 'Receives no events. Test events can still be sent.'}
+        </span>
+      </div>
+      {mutation.isError && (
+        <p role="alert" className="mt-2 text-red-700 text-xs">
+          Failed to update the webhook. Please try again.
+        </p>
+      )}
     </div>
   )
 }
@@ -165,6 +212,9 @@ export default function WebhookDetail() {
       <TestEventResult delivery={testMutation.data} isRequestError={testMutation.isError} />
 
       <dl className="bg-white border border-slate-200 rounded-lg px-6 py-2 text-sm divide-y divide-slate-100">
+        <DetailRow label="Status">
+          <ActiveToggle endpoint={data} />
+        </DetailRow>
         <DetailRow label="Events">
           <EventTypeTags eventTypes={data.event_types} />
         </DetailRow>

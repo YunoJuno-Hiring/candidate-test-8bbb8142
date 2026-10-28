@@ -43,6 +43,13 @@ export function createWebhookEndpoint(input: NewWebhookEndpointInput): Promise<C
   return api.post('/api/webhook-endpoints/', input)
 }
 
+export function updateWebhookEndpoint(
+  id: number,
+  changes: Partial<Pick<WebhookEndpoint, 'url' | 'active' | 'event_types'>>,
+): Promise<WebhookEndpoint> {
+  return api.patch(`/api/webhook-endpoints/${id}/`, changes)
+}
+
 // Resolves with the logged delivery whether or not the receiver accepted the event.
 export function sendTestWebhookEvent(id: number): Promise<WebhookDelivery> {
   return api.post(`/api/webhook-endpoints/${id}/test/`, {})
