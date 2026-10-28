@@ -49,9 +49,15 @@ def second_admin_client(northstar):
     return client
 
 
+def _test_url(endpoint_id: int) -> str:
+    return f'/api/webhook-endpoints/{endpoint_id}/test/'
+
+
 def _send(client, method: str, target: str, endpoint_id: int):
     if target == 'list':
         return getattr(client, method)(LIST_URL, {'url': 'https://new.test/hooks'}, format='json')
+    if target == 'test':
+        return client.post(_test_url(endpoint_id), format='json')
     return getattr(client, method)(_detail_url(endpoint_id), {'active': False}, format='json')
 
 
@@ -72,6 +78,7 @@ ALL_ROUTES = [
     ('get', 'detail'),
     ('patch', 'detail'),
     ('delete', 'detail'),
+    ('post', 'test'),
 ]
 
 
@@ -93,6 +100,7 @@ def test_freelancer_cannot_manage_webhook_endpoints(freelancer_client, endpoint,
     endpoint.refresh_from_db()
     assert endpoint.active is True
     assert WebhookEndpoint.objects.count() == 1
+    assert not WebhookDelivery.objects.exists()
 
 
 # --- List ---
@@ -434,3 +442,54 @@ def test_admin_cannot_delete_other_company_endpoint(admin_client, other_endpoint
 
     assert resp.status_code == 404
     assert WebhookEndpoint.objects.filter(pk=other_endpoint.id).exists()
+
+
+# --- Send test event ---
+
+@pytest.mark.django_db
+def test_admin_sends_test_event_and_gets_logged_delivery(admin_client, northstar, fake_receiver):
+    endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar)
+
+    resp = admin_client.post(_test_url(endpoint.id), format='json')
+
+    assert resp.status_code == 201
+    assert resp.data['event_type'] == 'webhook.test'
+    assert resp.data['attempt'] == 1
+    assert resp.data['successful'] is True
+    assert resp.data['reason'] == 'HTTP 200'
+    assert len(fake_receiver.requests) == 1
+    detail = admin_client.get(_detail_url(endpoint.id))
+    assert [d['id'] for d in detail.data['deliveries']] == [resp.data['id']]
+
+
+@pytest.mark.django_db
+def test_failed_test_event_is_reported_not_raised(admin_client, northstar, fake_receiver):
+    fake_receiver.status_code = 500
+    endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar)
+
+    resp = admin_client.post(_test_url(endpoint.id), format='json')
+
+    assert resp.status_code == 201
+    assert resp.data['successful'] is False
+    assert resp.data['reason'] == 'HTTP 500'
+
+
+@pytest.mark.django_db
+def test_test_event_is_sent_to_disabled_endpoint(admin_client, northstar, fake_receiver):
+    endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar, active=False)
+
+    resp = admin_client.post(_test_url(endpoint.id), format='json')
+
+    assert resp.status_code == 201
+    assert len(fake_receiver.requests) == 1
+
+
+@pytest.mark.django_db
+def test_admin_cannot_send_test_event_to_other_company_endpoint(admin_client, meridian, fake_receiver):
+    endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=meridian)
+
+    resp = admin_client.post(_test_url(endpoint.id), format='json')
+
+    assert resp.status_code == 404
+    assert fake_receiver.requests == []
+    assert not WebhookDelivery.objects.exists()

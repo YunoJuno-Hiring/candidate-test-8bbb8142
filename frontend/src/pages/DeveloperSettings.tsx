@@ -252,7 +252,7 @@ export default function DeveloperSettings() {
             />
             <p className="text-slate-400 text-xs mt-1">
               For local testing, use{' '}
-              <code className="bg-slate-100 px-1 rounded">http://webhook-receiver:8027/hook</code>
+              <code className="bg-slate-100 px-1 rounded">http://localhost:8027/hook</code>
             </p>
           </div>
           <EventTypePicker selected={eventTypes} onChange={setEventTypes} />

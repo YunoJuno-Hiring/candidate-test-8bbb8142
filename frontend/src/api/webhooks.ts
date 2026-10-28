@@ -43,6 +43,11 @@ export function createWebhookEndpoint(input: NewWebhookEndpointInput): Promise<C
   return api.post('/api/webhook-endpoints/', input)
 }
 
+// Resolves with the logged delivery whether or not the receiver accepted the event.
+export function sendTestWebhookEvent(id: number): Promise<WebhookDelivery> {
+  return api.post(`/api/webhook-endpoints/${id}/test/`, {})
+}
+
 export function deleteWebhookEndpoint(id: number): Promise<void> {
   return api.delete(`/api/webhook-endpoints/${id}/`)
 }

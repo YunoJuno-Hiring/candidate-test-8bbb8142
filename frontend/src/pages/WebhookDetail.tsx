@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { fetchWebhookEndpoint } from '../api/webhooks'
+import { fetchWebhookEndpoint, sendTestWebhookEvent } from '../api/webhooks'
 import { ApiError, WebhookDelivery } from '../api/client'
 import { EndpointStatusBadge, EventTypeTag, EventTypeTags } from '../components/WebhookBadges'
 
@@ -22,6 +22,31 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
     <div className="flex gap-4 py-2">
       <dt className="w-32 shrink-0 text-slate-500">{label}</dt>
       <dd className="text-slate-800">{children}</dd>
+    </div>
+  )
+}
+
+function TestEventResult({ delivery, isRequestError }: { delivery?: WebhookDelivery; isRequestError: boolean }) {
+  if (isRequestError) {
+    return (
+      <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded px-4 py-3 text-sm">
+        Could not send the test event. Please try again.
+      </div>
+    )
+  }
+  if (!delivery) return null
+
+  if (delivery.successful) {
+    return (
+      <div role="status" className="bg-green-50 border border-green-200 text-green-800 rounded px-4 py-3 text-sm">
+        Test event delivered ({delivery.reason}).
+      </div>
+    )
+  }
+  return (
+    <div role="status" className="bg-red-50 border border-red-200 text-red-700 rounded px-4 py-3 text-sm">
+      Test event failed: {delivery.reason || 'no response'}. Check that the URL is reachable from the YunoJuno
+      server.
     </div>
   )
 }
@@ -85,6 +110,12 @@ export default function WebhookDetail() {
     retry: false,
   })
 
+  const queryClient = useQueryClient()
+  const testMutation = useMutation({
+    mutationFn: () => sendTestWebhookEvent(numId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['webhook-endpoint', numId] }),
+  })
+
   const isNotFound = !isValidId || (isError && error instanceof ApiError && error.status === 404)
 
   if (isNotFound) {
@@ -117,9 +148,21 @@ export default function WebhookDetail() {
         <BackLink />
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-xl font-semibold text-slate-900 font-mono break-all">{data.url}</h1>
-          <EndpointStatusBadge isActive={data.active} />
+          <div className="flex items-center gap-3 shrink-0">
+            <EndpointStatusBadge isActive={data.active} />
+            <button
+              type="button"
+              onClick={() => testMutation.mutate()}
+              disabled={testMutation.isPending}
+              className="bg-indigo-600 text-white text-sm px-4 py-2 rounded hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {testMutation.isPending ? 'Sending…' : 'Send test event'}
+            </button>
+          </div>
         </div>
       </div>
+
+      <TestEventResult delivery={testMutation.data} isRequestError={testMutation.isError} />
 
       <dl className="bg-white border border-slate-200 rounded-lg px-6 py-2 text-sm divide-y divide-slate-100">
         <DetailRow label="Events">

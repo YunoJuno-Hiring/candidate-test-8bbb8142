@@ -1,14 +1,29 @@
 import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import WebhookDetail from './WebhookDetail'
-import { ApiError, WebhookEndpointDetail } from '../api/client'
-import { fetchWebhookEndpoint } from '../api/webhooks'
+import { ApiError, WebhookDelivery, WebhookEndpointDetail } from '../api/client'
+import { fetchWebhookEndpoint, sendTestWebhookEvent } from '../api/webhooks'
 import { renderRoute } from '../test/render'
 
 vi.mock('../api/webhooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/webhooks')>()),
   fetchWebhookEndpoint: vi.fn(),
+  sendTestWebhookEvent: vi.fn(),
 }))
+
+function makeTestDelivery(overrides: Partial<WebhookDelivery> = {}): WebhookDelivery {
+  return {
+    id: 20,
+    event_id: '0b6a2f1e-0000-4000-8000-000000000020',
+    event_type: 'webhook.test',
+    attempt: 1,
+    successful: true,
+    reason: 'HTTP 200',
+    created_at: '2026-10-04T09:00:00Z',
+    ...overrides,
+  }
+}
 
 function makeDetail(overrides: Partial<WebhookEndpointDetail> = {}): WebhookEndpointDetail {
   return {
@@ -105,5 +120,47 @@ describe('WebhookDetail', () => {
     renderPage('3')
 
     expect(await screen.findByText('Failed to load webhook.')).toBeInTheDocument()
+  })
+
+  it('sends a test event and shows it in the delivery log', async () => {
+    const user = userEvent.setup()
+    const delivery = makeTestDelivery()
+    vi.mocked(fetchWebhookEndpoint)
+      .mockResolvedValueOnce(makeDetail())
+      .mockResolvedValue(makeDetail({ deliveries: [delivery] }))
+    vi.mocked(sendTestWebhookEvent).mockResolvedValue(delivery)
+    renderPage('3')
+
+    await user.click(await screen.findByRole('button', { name: 'Send test event' }))
+
+    expect(sendTestWebhookEvent).toHaveBeenCalledWith(3)
+    expect(await screen.findByRole('status')).toHaveTextContent('Test event delivered (HTTP 200).')
+    const [, row] = await screen.findAllByRole('row')
+    expect(within(row).getByText('Test event')).toBeInTheDocument()
+  })
+
+  it('reports a test event the receiver rejected', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetchWebhookEndpoint).mockResolvedValue(makeDetail())
+    vi.mocked(sendTestWebhookEvent).mockResolvedValue(
+      makeTestDelivery({ successful: false, reason: 'connection failed' }),
+    )
+    renderPage('3')
+
+    await user.click(await screen.findByRole('button', { name: 'Send test event' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Test event failed: connection failed.')
+  })
+
+  it('shows an error when the test event request fails', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetchWebhookEndpoint).mockResolvedValue(makeDetail())
+    vi.mocked(sendTestWebhookEvent).mockRejectedValue(new ApiError(500, {}))
+    renderPage('3')
+
+    await user.click(await screen.findByRole('button', { name: 'Send test event' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not send the test event.')
+    expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled()
   })
 })

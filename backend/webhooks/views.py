@@ -5,9 +5,11 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .delivery import send_test_event
 from .models import UNIQUE_COMPANY_URL_CONSTRAINT, WebhookEndpoint
 from .serializers import (
     DUPLICATE_URL_MESSAGE,
+    WebhookDeliverySerializer,
     WebhookEndpointCreateSerializer,
     WebhookEndpointDetailSerializer,
     WebhookEndpointSerializer,
@@ -71,7 +73,24 @@ class WebhookEndpointDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _get_endpoint(self, request, pk):
-        # Another company's endpoint gives 404, so its existence is not revealed.
-        return get_object_or_404(
-            WebhookEndpoint, pk=pk, company_id=request.user.company_admin.company_id
-        )
+        return _get_company_endpoint(request, pk)
+
+
+class WebhookEndpointTestView(APIView):
+    """Sends one test event to the endpoint and returns the recorded delivery.
+
+    Delivery is synchronous, so the admin sees the receiver's answer at once.
+    A failed delivery is still a 201: the attempt was made and logged, and
+    its outcome is in the response body.
+    """
+
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+
+    def post(self, request, pk):
+        delivery = send_test_event(_get_company_endpoint(request, pk))
+        return Response(WebhookDeliverySerializer(delivery).data, status=status.HTTP_201_CREATED)
+
+
+def _get_company_endpoint(request, pk) -> WebhookEndpoint:
+    # Another company's endpoint gives 404, so its existence is not revealed.
+    return get_object_or_404(WebhookEndpoint, pk=pk, company_id=request.user.company_admin.company_id)
