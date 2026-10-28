@@ -1,6 +1,10 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from accounts.serializers import CompanySerializer, FreelancerSerializer
+from webhooks.delivery import publish_event
+from webhooks.models import EVENT_CONTRACT_CREATED
+
 from .models import Contract, TimesheetEntry
 
 
@@ -30,6 +34,24 @@ class ContractCreateSerializer(serializers.ModelSerializer):
                 {'end_date': 'End date must be on or after the start date.'}
             )
         return attrs
+
+    def create(self, validated_data):
+        contract = super().create(validated_data)
+        transaction.on_commit(
+            lambda: publish_event(
+                contract.company,
+                EVENT_CONTRACT_CREATED,
+                {
+                    'contract_id': contract.id,
+                    'freelancer_id': contract.freelancer_id,
+                    'daily_rate': contract.daily_rate,
+                    'start_date': contract.start_date,
+                    'end_date': contract.end_date,
+                    'status': contract.status,
+                },
+            )
+        )
+        return contract
 
 
 class TimesheetEntrySerializer(serializers.ModelSerializer):
