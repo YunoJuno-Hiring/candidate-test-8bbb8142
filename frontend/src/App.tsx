@@ -9,6 +9,7 @@ import SubmitHours from './pages/SubmitHours'
 import Billing from './pages/Billing'
 import InvoiceDetail from './pages/InvoiceDetail'
 import DeveloperSettings from './pages/DeveloperSettings'
+import WebhookDetail from './pages/WebhookDetail'
 import { ReactNode } from 'react'
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -97,6 +98,16 @@ function AppRoutes() {
           <RequireAuth>
             <Layout>
               <DeveloperSettings />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/developers/webhook/:id"
+        element={
+          <RequireAuth>
+            <Layout>
+              <WebhookDetail />
             </Layout>
           </RequireAuth>
         }

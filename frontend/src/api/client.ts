@@ -48,10 +48,36 @@ export interface Invoice {
   [key: string]: unknown
 }
 
+// 'webhook.test' is not listed: it is sent on demand and cannot be subscribed to.
+export type WebhookEventType = 'timesheet.submitted' | 'timesheet.approved' | 'contract.created'
+
 export interface WebhookEndpoint {
-  id: string | number
+  id: number
   url: string
   active: boolean
+  // Empty means the endpoint receives every event type.
+  event_types: WebhookEventType[]
+  created_at: string
+  last_modified: string
+}
+
+// Only the create response carries the secret; it is never returned again.
+export interface CreatedWebhookEndpoint extends WebhookEndpoint {
+  secret: string
+}
+
+export interface WebhookDelivery {
+  id: number
+  event_id: string
+  event_type: WebhookEventType | 'webhook.test'
+  attempt: number
+  successful: boolean
+  reason: string
+  created_at: string
+}
+
+export interface WebhookEndpointDetail extends WebhookEndpoint {
+  deliveries: WebhookDelivery[]
 }
 
 function getToken(): string | null {

@@ -4,7 +4,7 @@ tasks:
   up:
     desc: Start the Docker Compose services in the background.
     cmds:
-      - docker compose up -d
+      - docker compose up -d --wait
 
   seed:
     desc: Run backend migrations and seed the database.
@@ -29,6 +29,7 @@ tasks:
     desc: Start the frontend development server.
     dir: frontend
     cmds:
+      - pnpm install --frozen-lockfile
       - pnpm run dev
 
   receiver:

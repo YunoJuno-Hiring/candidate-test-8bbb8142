@@ -6,7 +6,9 @@ services:
       POSTGRES_USER: yunojuno
       POSTGRES_PASSWORD: yunojuno
     ports:
-      - "5432:5432"
+      # Consider e.g. 5433:5432 (and set DB_PORT=5433) so it does not map to
+      # default port used by a potential Postgres process running on the host.
+      - "5432:5432" 
     volumes:
       - postgres_data:/var/lib/postgresql
 
