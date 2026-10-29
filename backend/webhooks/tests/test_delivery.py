@@ -186,24 +186,28 @@ def test_publish_event_reuses_same_body_and_event_id_for_all_endpoints(northstar
 
 
 @pytest.mark.django_db
-def test_creating_contract_publishes_signed_webhook(admin_client, northstar, fake_receiver):
+def test_creating_contract_publishes_signed_webhook(
+    admin_client, northstar, fake_receiver, django_capture_on_commit_callbacks
+):
     endpoint = WebhookEndpoint.objects.create(url=fake_receiver.url, company=northstar)
     freelancer_user = User.objects.create_user(
         username='hooked@test.test', email='hooked@test.test', password='x'
     )
     freelancer = Freelancer.objects.create(user=freelancer_user, name='Hooked Freelancer')
 
-    resp = admin_client.post(
-        '/api/contracts/',
-        {
-            'freelancer': freelancer.id,
-            'daily_rate': '550.00',
-            'start_date': '2026-02-01',
-            'end_date': '2026-08-31',
-            'status': 'active',
-        },
-        format='json',
-    )
+    # The event is published on commit, which never happens inside the test transaction.
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = admin_client.post(
+            '/api/contracts/',
+            {
+                'freelancer': freelancer.id,
+                'daily_rate': '550.00',
+                'start_date': '2026-02-01',
+                'end_date': '2026-08-31',
+                'status': 'active',
+            },
+            format='json',
+        )
 
     assert resp.status_code == 201
     delivery = WebhookDelivery.objects.get()
