@@ -90,7 +90,47 @@ class WebhookEndpointTestView(APIView):
         delivery = send_test_event(_get_company_endpoint(request, pk))
         return Response(WebhookDeliverySerializer(delivery).data, status=status.HTTP_201_CREATED)
 
-
 def _get_company_endpoint(request, pk) -> WebhookEndpoint:
     # Another company's endpoint gives 404, so its existence is not revealed.
     return get_object_or_404(WebhookEndpoint, pk=pk, company_id=request.user.company_admin.company_id)
+
+
+class IsDeliveryServiceStub(BasePermission):
+    """Lets in only the delivery service, by its shared token."""
+
+    message = 'Only the webhook delivery service can report deliveries.'
+
+    def has_permission(self, request, view):
+        ...
+
+
+class WebhookDeliveryReportViewStub(APIView):
+    """Stub for a future design: not implemented yet, always answers 501.
+
+    Planned async flow: publishing an event signs the request for each
+    subscribed endpoint and enqueues it (URL, signed headers, body, endpoint
+    id, attempt) instead of POSTing inline. A worker consuming that queue
+    sends those exact bytes, then reports the outcome here before acking the
+    message, and re-enqueues with a backoff and attempt + 1 when it failed.
+    The worker never holds endpoint secrets.
+
+    Planned contract, one report per attempt:
+
+        {"event_id", "event_type", "destination", "attempt", "successful", "reason"}
+
+    Queues deliver at least once, so reports must be idempotent on
+    (event_id, destination, attempt), which the WebhookDelivery unique
+    constraint already enforces:
+        201  new attempt recorded; ack.
+        200  same attempt already recorded with the same outcome; ack.
+        409  same attempt already recorded with a different outcome; the log
+             is append-only, so the stored row wins.
+        400  invalid report, or the endpoint was deleted; drop the message.
+        5xx  not recorded; do not ack, the queue redelivers.
+    """
+
+    authentication_classes = []
+    permission_classes = [IsDeliveryServiceStub]
+
+    def post(self, request):
+        ...
