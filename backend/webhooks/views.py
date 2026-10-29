@@ -105,7 +105,7 @@ class IsDeliveryServiceStub(BasePermission):
 
 
 class WebhookDeliveryReportViewStub(APIView):
-    """Stub for a future design: not implemented yet, always answers 501.
+    """Stub for a future design: not implemented yet.
 
     Planned async flow: publishing an event signs the request for each
     subscribed endpoint and enqueues it (URL, signed headers, body, endpoint
@@ -119,8 +119,7 @@ class WebhookDeliveryReportViewStub(APIView):
         {"event_id", "event_type", "destination", "attempt", "successful", "reason"}
 
     Queues deliver at least once, so reports must be idempotent on
-    (event_id, destination, attempt), which the WebhookDelivery unique
-    constraint already enforces:
+    (event_id, destination, attempt), HMAC-SHA256
         201  new attempt recorded; ack.
         200  same attempt already recorded with the same outcome; ack.
         409  same attempt already recorded with a different outcome; the log
